@@ -1,0 +1,10 @@
+[project]
+name = "impact-pose-estimation"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pybullet>=3.2.7",
+    "pygame>=2.6.1",
+]
