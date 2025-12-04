@@ -102,7 +102,7 @@ def quat_from_yaw(yaw):
     return [0, 0, math.sin(half), math.cos(half)]
 
 
-def reset_cars():
+def reset_cars_randomized():
     # Random symmetrical X positions and small Y jitter
     x1 = random.uniform(-3.0, -2)
     y1 = random.uniform(-0.8, 0.8)
@@ -130,19 +130,32 @@ def reset_cars():
         car1: pos1,
     }
 
+def reset_cars(x_pos, y_pos, yaw, speed):
+    # Random symmetrical X positions and small Y jitter
+    #x1 = random.uniform(-3.0, -2)
+    #y1 = random.uniform(-0.8, 0.8)
 
-# initial run
-last_collision = False
+    y_pos += 0.1 * -1 if y_pos < 0 else 1
+
+    z = 0
+
+    pos1 = [x_pos, y_pos, z]
+    # zero angular velocity and set linear velocity toward each other
+    v1, v2 = compute_pair_velocities(pos1, [0, 0, 0], speed)
+
+    orn1 = quat_from_yaw(yaw)
+
+    # place cubes
+    p.resetBasePositionAndOrientation(car1, pos1, orn1)
+    p.resetBaseVelocity(car1, linearVelocity=v1, angularVelocity=[0, 0, 0])
+    # p.resetBaseVelocity(car2, linearVelocity=v2, angularVelocity=[0, 0, 0])
+
+    global last_positions
+    last_positions = {
+        car1: pos1,
+    }
+
 last_positions = {}
-reset_cars()
-print("Press R to randomize positions. Collisions play sound.")
-
-data_log = []
-sim_frames = []
-collision_start_time = None
-sim_start_time = time.time()
-has_logged = False
-
 
 def save_sim_data(rows):
     os.makedirs("sim_logs", exist_ok=True)
@@ -170,6 +183,8 @@ def save_sim_data(rows):
         )
         w.writerows(rows)
     print("Saved:", filename)
+
+    return filename
 
 
 WIDTH = 512
@@ -215,80 +230,109 @@ projection_matrix = p.computeProjectionMatrixFOV(
     fov=FOV, aspect=WIDTH / HEIGHT, nearVal=NEAR, farVal=FAR
 )
 
-# Main loop
-while True:
-    p.stepSimulation()
-    frame_time = time.time() - sim_start_time
-    time.sleep(1 / 240)
+def run_simulation(should_use_randomized, x_pos=0, y_pos=0, yaw=0, speed=10):
 
-    if not has_logged:
-        # Record gif
-        frame = p.getCameraImage(
-            WIDTH,
-            HEIGHT,
-            projectionMatrix=projection_matrix,
-            renderer=p.ER_BULLET_HARDWARE_OPENGL,
+    # initial run
+    last_collision = False
+    if (should_use_randomized):
+        reset_cars_randomized()
+    else:
+        reset_cars(x_pos, y_pos, yaw, speed)
+    print("Press R to randomize positions. Collisions play sound.")
+
+    data_log = []
+    sim_frames = []
+    collision_start_time = None
+    sim_start_time = time.time()
+    has_logged = False
+
+    # Main loop
+    while True:
+        p.stepSimulation()
+        frame_time = time.time() - sim_start_time
+        time.sleep(1 / 240)
+
+        if not has_logged:
+            # Record gif
+            frame = p.getCameraImage(
+                WIDTH,
+                HEIGHT,
+                projectionMatrix=projection_matrix,
+                renderer=p.ER_BULLET_HARDWARE_OPENGL,
+            )
+            print(len(frame[2]))
+            sim_frames.append(np.reshape(frame[2], (HEIGHT, WIDTH, 4)) * 1.0 / 255.0)
+
+        # Detect collisions between cubes
+        contacts = p.getContactPoints(car1, wall_body)
+        collision_now = len(contacts) > 0
+
+        # Get car state
+        pos, orn = p.getBasePositionAndOrientation(car1)
+        lin_vel, ang_vel = p.getBaseVelocity(car1)
+
+        # Play sound on *new* collision start
+        if collision_now and not last_collision:
+            if collision_start_time is None:
+                collision_start_time = frame_time
+            impact.play()
+
+        # Store one row of data per frame
+        data_log.append(
+            [
+                frame_time,
+                pos[0],
+                pos[1],
+                pos[2],
+                orn[0],
+                orn[1],
+                orn[2],
+                orn[3],
+                lin_vel[0],
+                lin_vel[1],
+                lin_vel[2],
+                ang_vel[0],
+                ang_vel[1],
+                ang_vel[2],
+                int(collision_now),
+            ]
         )
-        print(len(frame[2]))
-        sim_frames.append(np.reshape(frame[2], (HEIGHT, WIDTH, 4)) * 1.0 / 255.0)
 
-    # Detect collisions between cubes
-    contacts = p.getContactPoints(car1, wall_body)
-    collision_now = len(contacts) > 0
+        last_collision = collision_now
 
-    # Get car state
-    pos, orn = p.getBasePositionAndOrientation(car1)
-    lin_vel, ang_vel = p.getBaseVelocity(car1)
+        filename = None
 
-    # Play sound on *new* collision start
-    if collision_now and not last_collision:
-        if collision_start_time is None:
-            collision_start_time = frame_time
-        impact.play()
+        # After 1 second post-impact, dump to disk
+        if (
+            collision_start_time is not None
+            and frame_time > collision_start_time + 1.0
+            and not has_logged
+        ):
+            filename = save_sim_data(data_log)
+            save_sim_frames(sim_frames)
+            has_logged = True
+            return filename
 
-    # Store one row of data per frame
-    data_log.append(
-        [
-            frame_time,
-            pos[0],
-            pos[1],
-            pos[2],
-            orn[0],
-            orn[1],
-            orn[2],
-            orn[3],
-            lin_vel[0],
-            lin_vel[1],
-            lin_vel[2],
-            ang_vel[0],
-            ang_vel[1],
-            ang_vel[2],
-            int(collision_now),
-        ]
-    )
+        # Check for R key
+        keys = p.getKeyboardEvents()
+        if (114 in keys and keys[114] & p.KEY_WAS_TRIGGERED) or (
+            82 in keys and keys[82] & p.KEY_WAS_TRIGGERED
+        ):
+            if (should_use_randomized):
+                reset_cars_randomized()
+            else:
+                reset_cars(x_pos=x_pos, y_pos=y_pos, yaw=yaw, speed=speed)
 
-    last_collision = collision_now
+            # Reset logging parameters
+            data_log = []
+            sim_frames = []
+            collision_start_time = None
+            sim_start_time = time.time()
+            has_logged = False
 
-    # After 1 second post-impact, dump to disk
-    if (
-        collision_start_time is not None
-        and frame_time > collision_start_time + 1.0
-        and not has_logged
-    ):
-        save_sim_data(data_log)
-        save_sim_frames(sim_frames)
-        has_logged = True
+filename1 = run_simulation(should_use_randomized=True)
+filename2 = run_simulation(should_use_randomized=False, x_pos=-2.5, y_pos=0, yaw=-180, speed=10)
 
-    # Check for R key
-    keys = p.getKeyboardEvents()
-    if (114 in keys and keys[114] & p.KEY_WAS_TRIGGERED) or (
-        82 in keys and keys[82] & p.KEY_WAS_TRIGGERED
-    ):
-        reset_cars()
+from compare_sims import compare_runs
 
-        # Reset logging parameters
-        data_log = []
-        sim_frames = []
-        collision_start_time = None
-        sim_start_time = time.time()
-        has_logged = False
+compare_runs(filename1, filename2)
