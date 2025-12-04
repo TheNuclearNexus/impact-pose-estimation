@@ -12,3 +12,10 @@ wheels/
 
 sim_logs/
 sim_gifs/
+templates/
+pose_estimation_side_by_side.png
+pose_estimation_result.png
+matches_visualization.png
+checkpoints/
+
+.DS_Store

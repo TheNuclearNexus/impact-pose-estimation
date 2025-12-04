@@ -1,3 +1,7 @@
+from camera_config import FAR
+from camera_config import NEAR
+from camera_config import FOV
+import json
 from pathlib import Path
 import numpy as np
 import pybullet as p
@@ -45,16 +49,17 @@ wall = p.createCollisionShape(p.GEOM_BOX, halfExtents=[0.05, 1, 1])
 wall_body = p.createMultiBody(
     baseMass=0, baseCollisionShapeIndex=wall, basePosition=[0, 0, 0]
 )
+p.changeVisualShape(wall_body, -1, rgbaColor=[0, 1, 0, 1])
 
 # --- Cube setup ---
-cube_half = [0.1, 0.1, 0.1]
-cube_shape = p.createCollisionShape(p.GEOM_BOX, halfExtents=cube_half)
-cube_red = p.createVisualShape(
-    p.GEOM_BOX, halfExtents=cube_half, rgbaColor=[1, 0, 0, 1]
-)
-cube_blue = p.createVisualShape(
-    p.GEOM_BOX, halfExtents=cube_half, rgbaColor=[0, 0, 1, 1]
-)
+# cube_half = [0.1, 0.1, 0.1]
+# cube_shape = p.createCollisionShape(p.GEOM_BOX, halfExtents=cube_half)
+# cube_red = p.createVisualShape(
+#     p.GEOM_BOX, halfExtents=cube_half, rgbaColor=[1, 1, 0, 1]
+# )
+# cube_blue = p.createVisualShape(
+#     p.GEOM_BOX, halfExtents=cube_half, rgbaColor=[0, 0, 1, 1]
+# )
 
 # cube1 = p.createMultiBody(baseMass=1, baseCollisionShapeIndex=cube_shape, baseVisualShapeIndex=cube_red, basePosition=[-1, 0, 0.1])
 # cube2 = p.createMultiBody(baseMass=1, baseCollisionShapeIndex=cube_shape, baseVisualShapeIndex=cube_blue, basePosition=[1, 0, 0.1])
@@ -166,8 +171,10 @@ def save_sim_data(rows):
         w.writerows(rows)
     print("Saved:", filename)
 
-WIDTH = 640
-HEIGHT = 480
+
+WIDTH = 512
+HEIGHT = 384
+
 
 def save_sim_frames(frames):
     from PIL import Image
@@ -180,6 +187,34 @@ def save_sim_frames(frames):
 
         print("Saved:", base / f"{i}.png")
 
+    # Save camera pose
+    cam = p.getDebugVisualizerCamera()
+    # cam[2] is the view matrix (tuple of 16 floats, column-major)
+    view_matrix = np.array(cam[2]).reshape(4, 4).T
+    # Inverse view matrix gives Camera -> World transform
+    inv_view_matrix = np.linalg.inv(view_matrix)
+    # Camera position is the translation part of the inverse view matrix
+    camera_pos = inv_view_matrix[:3, 3]
+
+    with open(base / "camera_pose.json", "w") as f:
+        json.dump(
+            {
+                "pos": camera_pos.tolist(),
+                "view_matrix": cam[2],
+                "projection_matrix": cam[3],
+                "yaw": cam[8],
+                "pitch": cam[9],
+                "dist": cam[10],
+                "target": cam[11],
+            },
+            f,
+        )
+
+
+projection_matrix = p.computeProjectionMatrixFOV(
+    fov=FOV, aspect=WIDTH / HEIGHT, nearVal=NEAR, farVal=FAR
+)
+
 # Main loop
 while True:
     p.stepSimulation()
@@ -188,7 +223,12 @@ while True:
 
     if not has_logged:
         # Record gif
-        frame = p.getCameraImage(WIDTH, HEIGHT, renderer=p.ER_BULLET_HARDWARE_OPENGL)
+        frame = p.getCameraImage(
+            WIDTH,
+            HEIGHT,
+            projectionMatrix=projection_matrix,
+            renderer=p.ER_BULLET_HARDWARE_OPENGL,
+        )
         print(len(frame[2]))
         sim_frames.append(np.reshape(frame[2], (HEIGHT, WIDTH, 4)) * 1.0 / 255.0)
 

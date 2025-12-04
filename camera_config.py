@@ -1,0 +1,5 @@
+
+FOV = 60
+ASPECT = 1.0
+NEAR = 0.02
+FAR = 5.0
